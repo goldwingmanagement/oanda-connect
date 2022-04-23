@@ -5,7 +5,7 @@ fxTrade Practice      stream-fxpractice.oanda.com
 sandbox               stream-sandbox.oanda.com
 */
 import { createLogger, format, transports } from 'winston';
-import { Db, MongoClient } from 'mongodb';
+import {Db, MongoClient, ObjectId} from 'mongodb';
 const { combine, timestamp, printf } = format;
 
 // tslint:disable-next-line:no-shadowed-variable
@@ -23,24 +23,89 @@ const logger = createLogger({
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 require('dotenv').config();
-
+const exchangeName = 'oanda';
 const domain = 'stream-fxtrade.oanda.com';
 const accessToken = process.env.APIKEY ? process.env.APIKEY : '';
 const accountId = process.env.ACCOUNTID ? process.env.ACCOUNTID : '';
 const mongodbUrl = process.env.MONGODBURL ? process.env.MONGODBURL : '';
 const mongodbName = process.env.MONGODBNAME ? process.env.MONGODBNAME : '';
-
-const mongoClient = new MongoClient(mongodbUrl);
+const timeframeList = process.env.TIMEFRAMES ? process.env.TIMEFRAMES : '';
+const timeframeNameList = process.env.TIMEFRAMENAMES ? process.env.TIMEFRAMENAMES : '';
 let db: Db;
 let dbConnected = false;
+let exchangeId: ObjectId | undefined;
+
+interface HashTable<T> {
+    [key: string]: T
+}
+
+interface Instrument {
+    symbol: string,
+    exchange: string,
+    marketSymbol: string,
+    exchangeId: ObjectId | undefined
+}
+
+interface Timeframe {
+    exchange: string,
+    symbol: string,
+    marketSymbol: string,
+    timeframe: string,
+    minutes: number,
+    exchangeId: ObjectId | undefined
+}
+
+// interface Candlestick {
+//     timestamp: Date,
+//     symbol: string,
+//     open: number,
+//     high: number,
+//     low: number,
+//     close: number,
+//     volume: number,
+//     exchangeId: string | null
+// }
+
+interface Ticker {
+    symbol: string,
+    time: Date,
+    bid: number,
+    ask: number,
+    exchangeId: ObjectId | undefined
+}
+
+const Instruments: HashTable<Instrument> = {};
+const Timeframes: HashTable<Timeframe> = {};
+
+const timeframes: string[] = timeframeList.split(',');
+const timeframeNames: string[] = timeframeNameList.split(',');
+const mongoClient = new MongoClient(mongodbUrl);
 
 const instrumentList: string[] = process.env.INSTRUMENTS ? process.env.INSTRUMENTS.split(',') : [];
 logger.info('Instruments: ' + instrumentList);
 let instruments = '';
 instrumentList.map(instrument => {
+    const symbol = instrument.replace('_', '/');
+    Instruments[symbol] = {
+        exchange: exchangeName,
+        symbol,
+        marketSymbol: instrument,
+        exchangeId: undefined
+    }
+    // tslint:disable-next-line:prefer-for-of
+    for (let i = 0; i < timeframes.length; i++) {
+        Timeframes[symbol + '-' + timeframeNames[i]] = {
+            timeframe: timeframeNames[i],
+            minutes: Number.parseInt(timeframes[i], 10),
+            symbol,
+            marketSymbol: instrument,
+            exchange: exchangeName,
+            exchangeId: undefined
+        }
+    }
     instruments += instrument + '%2C';
 });
-instruments = instruments.substr(0, instruments.length - 3);
+instruments = instruments.slice(0, instruments.length - 3);
 
 // tslint:disable-next-line:no-var-requires
 const https = domain.indexOf('stream-sandbox') > -1 ? require('http') : require('https');
@@ -53,12 +118,6 @@ const options = {
 
 let heartbeat: Date;
 
-interface Ticker {
-    symbol: string,
-    time: Date,
-    bid: number,
-    ask: number,
-}
 const request = https.request(options, (response: any) => {
     let bodyChunk = '';
     response.on('data', (chunk: any) => {
@@ -95,7 +154,8 @@ const processMessage = (message: string) => {
                 symbol: json.instrument.replace('_', '/'),
                 time: json.time,
                 bid: json.closeoutBid,
-                ask: json.closeoutAsk
+                ask: json.closeoutAsk,
+                exchangeId
             };
             ProcessTicker(ticker);
             break;
@@ -106,10 +166,7 @@ const processMessage = (message: string) => {
     }
 }
 
-logger.info('Connecting to database.');
-connect();
-
-async function connect() {
+const connect = async () => {
     try {
         await mongoClient.connect();
         logger.info('Connected to database.');
@@ -125,10 +182,19 @@ async function connect() {
                 exchange.insertOne({
                     name: 'oanda',
                     heartbeat: new Date().getTime()
+                }, (insertErr, exchangeInsert) => {
+                    if (insertErr) {
+                        logger.error(insertErr);
+                        return;
+                    }
+                    exchangeId = exchangeInsert?.insertedId;
+                    UpdateInstruments();
                 });
             }
             else {
                 dbConnected = true;
+                exchangeId = exchangeItem?._id;
+                UpdateInstruments();
             }
             logger.info('Connecting to oanda: ' + domain);
             request.end();
@@ -137,6 +203,37 @@ async function connect() {
     catch (err) {
         logger.error(err);
     }
+}
+
+const UpdateInstruments = async () => {
+  // Make sure all instruments are accounted for
+    Object.keys(Timeframes).forEach(key => {
+        Timeframes[key].exchangeId = exchangeId;
+        const object = Timeframes[key];
+        db.collection('timeframe').updateOne({
+            exchange: exchangeName,
+            symbol: Timeframes[key].symbol,
+            exchangeId
+        }, {
+            $setOnInsert: object
+        }, {
+            upsert: true
+        });
+    });
+    Object.keys(Instruments).forEach(key => {
+        Instruments[key].exchangeId = exchangeId;
+        const object = Instruments[key];
+        db.collection('instruments').updateOne({
+            exchange: exchangeName,
+            symbol: object.symbol,
+            marketSymbol: object.marketSymbol,
+            exchangeId
+        }, {
+            $setOnInsert: object
+        }, {
+            upsert: true
+        });
+    })
 }
 
 // tslint:disable-next-line:no-shadowed-variable
@@ -161,6 +258,10 @@ const ProcessTicker = (ticker: Ticker) => {
        symbol: ticker.symbol,
        bid: ticker.bid,
        ask: ticker.ask,
-       timestamp: ticker.time
+       timestamp: new Date(ticker.time),
+       exchangeId
     });
 };
+
+logger.info('Connecting to database.');
+connect();
