@@ -213,6 +213,7 @@ const UpdateInstruments = async () => {
         db.collection('timeframe').updateOne({
             exchange: exchangeName,
             symbol: Timeframes[key].symbol,
+            timeframe: object.timeframe,
             exchangeId
         }, {
             $setOnInsert: object
@@ -223,7 +224,7 @@ const UpdateInstruments = async () => {
     Object.keys(Instruments).forEach(key => {
         Instruments[key].exchangeId = exchangeId;
         const object = Instruments[key];
-        db.collection('instruments').updateOne({
+        db.collection('instrument').updateOne({
             exchange: exchangeName,
             symbol: object.symbol,
             marketSymbol: object.marketSymbol,
