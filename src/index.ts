@@ -43,6 +43,10 @@ interface Instrument {
     symbol: string,
     exchange: string,
     marketSymbol: string,
+    epoch: number,
+    timestamp: Date,
+    bid: number,
+    ask: number,
     exchangeId: ObjectId | undefined
 }
 
@@ -68,7 +72,8 @@ interface Timeframe {
 
 interface Ticker {
     symbol: string,
-    time: Date,
+    epoch: number,
+    timestamp: Date,
     bid: number,
     ask: number,
     exchangeId: ObjectId | undefined
@@ -90,7 +95,11 @@ instrumentList.map(instrument => {
         exchange: exchangeName,
         symbol,
         marketSymbol: instrument,
-        exchangeId: undefined
+        exchangeId: undefined,
+        epoch: new Date().getTime(),
+        timestamp: new Date(),
+        bid: 0,
+        ask: 0
     }
     // tslint:disable-next-line:prefer-for-of
     for (let i = 0; i < timeframes.length; i++) {
@@ -152,7 +161,8 @@ const processMessage = (message: string) => {
             // eslint-disable-next-line no-case-declarations
             const ticker: Ticker = {
                 symbol: json.instrument.replace('_', '/'),
-                time: json.time,
+                epoch: new Date(json.time).getTime(),
+                timestamp: new Date(json.time),
                 bid: json.closeoutBid,
                 ask: json.closeoutAsk,
                 exchangeId
@@ -259,8 +269,20 @@ const ProcessTicker = (ticker: Ticker) => {
        symbol: ticker.symbol,
        bid: ticker.bid,
        ask: ticker.ask,
-       timestamp: new Date(ticker.time),
+       epoch: new Date(ticker.timestamp).getTime(),
+       timestamp: new Date(ticker.timestamp),
        exchangeId
+    });
+    db.collection('instrument').updateOne({
+        symbol: ticker.symbol,
+        exchangeId
+    }, {
+        $set: {
+            bid: ticker.bid,
+            ask: ticker.ask,
+            epoch: new Date(ticker.timestamp).getTime(),
+            timestamp: new Date(ticker.timestamp)
+        }
     });
 };
 
