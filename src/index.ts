@@ -256,7 +256,9 @@ const ProcessHeartbeat = (heartbeat: Date) => {
             name: 'oanda'
         }, {
             $set: {
-                heartbeat: new Date(heartbeat).getTime()
+                heartbeat: new Date(heartbeat).getTime(),
+                timestamp : new Date(heartbeat),
+                epoch: new Date(heartbeat).getTime()
             }
         })
     }
