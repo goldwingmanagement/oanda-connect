@@ -168,6 +168,7 @@ const request = https.request(options, (response: any) => {
         });
     } catch (err) {
         logger.error(err);
+        process.exit(1);
     }
 });
 
@@ -250,7 +251,7 @@ const connect = async () => {
 const CheckHeartbeat = () => {
     if (heartbeat === null) return;
     const delay = Math.abs(new Date().getTime() - new Date(heartbeat).getTime());
-    if (delay > 30000) {
+    if (delay > 60000) {
         logger.error('Heartbeat is stale, killing process');
         process.exit(1);
     }
