@@ -22,6 +22,7 @@ const logger = createLogger({
 });
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+logger.info('Initializing.');
 require('dotenv').config();
 const exchangeName = 'oanda';
 const domain = 'stream-fxtrade.oanda.com';
@@ -31,7 +32,7 @@ const mongodbUrl = process.env.MONGODBURL ? process.env.MONGODBURL : '';
 const mongodbName = process.env.MONGODBNAME ? process.env.MONGODBNAME : '';
 const timeframeList = process.env.TIMEFRAMES ? process.env.TIMEFRAMES : '';
 const timeframeNameList = process.env.TIMEFRAMENAMES ? process.env.TIMEFRAMENAMES : '';
-const enableLog = process.env.ENABLELOG ? process.env.ENABLELOG : false;
+const enableLog = process.env.ENABLELOG ? process.env.ENABLELOG === "true" : false;
 let db: Db;
 let dbConnected = false;
 let streaming = false;
@@ -60,16 +61,17 @@ interface Timeframe {
     marketSymbol: string,
     timeframe: string,
     minutes: number,
-    candlestick: RaindropCandlestick | undefined,
+    candlestick: Candlestick | undefined,
     exchangeId: ObjectId | undefined
 }
 
-interface RaindropCandlestick {
+interface Candlestick {
     _id: ObjectId | undefined,
     timestamp: Date,
     epoch: number,
     nextTimestamp: Date,
     symbol: string,
+    timeframe: string,
     open: number,
     high: number,
     low: number,
@@ -189,10 +191,10 @@ const processMessage = (message: string) => {
                 symbol: json.instrument.replace('_', '/'),
                 epoch: new Date(json.time).getTime(),
                 timestamp: new Date(json.time),
-                bid: json.closeoutBid,
-                ask: json.closeoutAsk,
-                bidVolume: json.bids[0].liquidity,
-                askVolume: json.asks[0].liquidity,
+                bid: Number.parseFloat(json.closeoutBid),
+                ask: Number.parseFloat(json.closeoutAsk),
+                bidVolume: Number.parseFloat(json.bids[0].liquidity),
+                askVolume: Number.parseFloat(json.asks[0].liquidity),
                 instrumentId: Instruments[json.instrument.replace('_', '/')]._id,
                 exchangeId
             };
@@ -247,7 +249,7 @@ const connect = async () => {
 
 const CheckHeartbeat = () => {
     if (heartbeat === null) return;
-    var delay = Math.abs(new Date().getTime() - new Date(heartbeat).getTime());
+    const delay = Math.abs(new Date().getTime() - new Date(heartbeat).getTime());
     if (delay > 30000) {
         logger.error('Heartbeat is stale, killing process');
         process.exit(1);
@@ -257,32 +259,6 @@ const CheckHeartbeat = () => {
 
 const UpdateInstruments = () => {
   // Make sure all instruments are accounted for
-    Object.keys(Timeframes).forEach(async key => {
-        Timeframes[key].exchangeId = exchangeId;
-        const object = Timeframes[key];
-        const collection = db.collection('timeframe');
-        try {
-            await collection.updateOne({
-                exchange: exchangeName,
-                symbol: Timeframes[key].symbol,
-                timeframe: object.timeframe,
-                exchangeId
-            }, {
-                $setOnInsert: object
-            }, {
-                upsert: true
-            });
-            const timeframe = await collection.findOne({
-                symbol: Timeframes[key].symbol,
-                exchangeId
-            })
-            if (timeframe !== null) {
-                Timeframes[key]._id = timeframe._id;
-            }
-        } catch (err) {
-            logger.error(err);
-        }
-    });
     Object.keys(Instruments).forEach(async key => {
         Instruments[key].exchangeId = exchangeId;
         const object = Instruments[key];
@@ -309,11 +285,55 @@ const UpdateInstruments = () => {
             logger.error(err);
         }
     });
+    Object.keys(Timeframes).forEach(async key => {
+        Timeframes[key].exchangeId = exchangeId;
+        const object = Timeframes[key];
+        const collection = db.collection('timeframe');
+        try {
+            await collection.updateOne({
+                exchange: exchangeName,
+                symbol: Timeframes[key].symbol,
+                timeframe: object.timeframe,
+                exchangeId
+            }, {
+                $setOnInsert: object
+            }, {
+                upsert: true
+            });
+            const timeframe = await collection.findOne({
+                symbol: Timeframes[key].symbol,
+                exchangeId
+            })
+            if (timeframe !== null) {
+                Timeframes[key]._id = timeframe._id;
+                const initialTimestamp = new Date(GetInitialTime(Timeframes[key]));
+                const nextTimestamp = new Date(initialTimestamp.getTime() + (Timeframes[key].minutes * 60000));
+                Timeframes[key].candlestick = {
+                    _id: new ObjectId(),
+                    symbol: Timeframes[key].symbol,
+                    timeframe: Timeframes[key].timeframe,
+                    timestamp: initialTimestamp,
+                    epoch: initialTimestamp.getTime(),
+                    nextTimestamp,
+                    open: 0,
+                    high: Number.MIN_VALUE,
+                    low: Number.MAX_VALUE,
+                    close: 0,
+                    volume: 0,
+                    timeframeId: timeframe._id,
+                    instrumentId: Instruments[Timeframes[key].symbol]._id,
+                    exchangeId
+                }
+            }
+        } catch (err) {
+            logger.error(err);
+        }
+    });
 }
 
 // tslint:disable-next-line:no-shadowed-variable
 const ProcessHeartbeat = (heartbeat: Date) => {
-    if (enableLog) logger.info(heartbeat);
+    if (enableLog === true) logger.info(heartbeat);
     if (dbConnected === true) {
         const exhange = db.collection('exchange');
         exhange.updateOne({
@@ -329,8 +349,9 @@ const ProcessHeartbeat = (heartbeat: Date) => {
 };
 
 const ProcessTicker = (ticker: Ticker) => {
-    if (enableLog) logger.info(JSON.stringify(ticker));
+    if (enableLog === true) logger.info(JSON.stringify(ticker));
     const tick = db.collection('tick');
+    if (ticker.instrumentId === undefined) return;
     tick.insertOne({
        symbol: ticker.symbol,
        bid: ticker.bid,
@@ -352,25 +373,126 @@ const ProcessTicker = (ticker: Ticker) => {
         }
     });
     Object.keys(Timeframes).forEach(key => {
-        var timeframe = Timeframes[key];
+        const timeframe = Timeframes[key];
         if (timeframe.symbol === ticker.symbol) {
             if (timeframe.candlestick === undefined) return;
             if (ticker.timestamp.getTime() < timeframe.candlestick.nextTimestamp.getTime()) {
                 // Update Candlestick
+                if (timeframe.candlestick.open === 0) {
+                    timeframe.candlestick.open = ticker.bid;
+                }
                 timeframe.candlestick.close = ticker.bid;
                 timeframe.candlestick.high = Math.max(timeframe.candlestick.high, ticker.bid);
                 timeframe.candlestick.low = Math.min(timeframe.candlestick.low, ticker.bid);
                 timeframe.candlestick.volume += ticker.bidVolume;
+                db.collection('candlestick').updateOne({
+                    timestamp: timeframe.candlestick.timestamp,
+                    symbol: timeframe.candlestick.symbol,
+                    timeframe: timeframe.candlestick.timeframe,
+                    exchangeId
+                }, {
+                    $set: {
+                        high: timeframe.candlestick.high,
+                        low: timeframe.candlestick.low,
+                        close: timeframe.candlestick.close,
+                        volume: timeframe.candlestick.volume
+                    }
+                }, (err) => {
+                    if (err) {
+                        logger.error(err);
+                    }
+                });
             } else {
                 // New Candlestick
+                timeframe.candlestick._id = new ObjectId();
+                timeframe.candlestick.timestamp = timeframe.candlestick.nextTimestamp;
+                timeframe.candlestick.epoch = timeframe.candlestick.nextTimestamp.getTime();
+                timeframe.candlestick.nextTimestamp = new Date(timeframe.candlestick.nextTimestamp.getTime() + (timeframe.minutes * 60000));
                 timeframe.candlestick.open = ticker.bid;
                 timeframe.candlestick.close = ticker.bid;
                 timeframe.candlestick.high = ticker.bid;
                 timeframe.candlestick.low = ticker.bid;
                 timeframe.candlestick.volume = ticker.bidVolume;
+                db.collection('candlestick').insertOne(timeframe.candlestick, (err) => {
+                    if (err) {
+                        logger.error(err);
+                    }
+                });
             }
+            if (enableLog === true) logger.info(JSON.stringify(timeframe.candlestick));
         }
     })
+};
+
+const GetInitialTime = (timeframe: Timeframe) => {
+    let lastMinute = new Date().setSeconds(0, 0);
+    let lastHour = new Date().setMinutes(0, 0, 0);
+    const lastDay = new Date().setHours(0, 0, 0, 0);
+    switch (timeframe.minutes) {
+    case 1:
+        return new Date(lastMinute + 60000).getTime();
+    case 5:
+        if (new Date(lastMinute).getMinutes() % timeframe.minutes > 0) {
+            do {
+                lastMinute -= 60000;
+            } while ((new Date(lastMinute).getMinutes() % timeframe.minutes) > 0);
+        }
+        return new Date(lastMinute).getTime();
+    case 10:
+        if (new Date(lastMinute).getMinutes() % timeframe.minutes > 0) {
+            do {
+                lastMinute -= 60000;
+            } while ((new Date(lastMinute).getMinutes() % timeframe.minutes) > 0);
+        }
+        return new Date(lastMinute).getTime();
+    case 15:
+        if ((new Date(lastMinute).getMinutes() % timeframe.minutes) > 0) {
+            do {
+                lastMinute -= 60000;
+            } while ((new Date(lastMinute).getMinutes() % timeframe.minutes) > 0);
+        }
+        return new Date(lastMinute).getTime();
+    case 30:
+        if (new Date(lastMinute).getMinutes() % timeframe.minutes > 0) {
+            do {
+                lastMinute -= 60000;
+            } while ((new Date(lastMinute).getMinutes() % timeframe.minutes) > 0);
+        }
+        return new Date(lastMinute).getTime();
+    case 60:
+        return new Date(lastHour).getTime();
+    case 120:
+        if ((new Date(lastHour).getHours() % 2) > 0) {
+            do {
+                lastHour -= (60000 * 60);
+            } while ((new Date(lastHour).getHours() % 2) > 0);
+        }
+        return new Date(lastHour + (60000 * 2)).getTime();
+    case 240:
+        if (new Date(lastHour).getHours() % 4 > 0) {
+            do {
+                lastHour -= (60000 * 60);
+            } while (new Date(lastHour).getHours() % 4 !== 0);
+        }
+        return new Date(lastHour).getTime();
+    case 360:
+        if (new Date(lastHour).getHours() % 6 > 0) {
+            do {
+                lastHour -= (60000 * 60);
+            } while (new Date(lastHour).getHours() % 6 !== 0);
+        }
+        return new Date(lastHour).getTime();
+    case 720:
+        if (new Date(lastHour).getHours() % 12 > 0) {
+            do {
+                lastHour -= (60000 * 60);
+            } while (new Date(lastHour).getHours() % 12 !== 0);
+        }
+        return new Date(lastHour).getTime();
+    case 1440:
+        return new Date(lastDay).getTime();
+    }
+    return new Date().getTime();
 };
 
 process.on('unhandledRejection', (err) => {
