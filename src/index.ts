@@ -51,6 +51,12 @@ interface Instrument {
     timestamp: Date,
     bid: number,
     ask: number,
+    pricePrecision: number,
+    quantityPrecision: number,
+    minimumNotional: number | null,
+    maximumNotional: number | null,
+    minimumQuantity: number | null,
+    maximumQuantity: number | null
     exchangeId: ObjectId | undefined
 }
 
@@ -108,7 +114,7 @@ let instruments = '';
 instrumentList.map(instrument => {
     const symbol = instrument.replace('_', '/');
     Instruments[symbol] = {
-        _id: undefined,
+        _id: new ObjectId(),
         exchange: exchangeName,
         symbol,
         marketSymbol: instrument,
@@ -117,11 +123,17 @@ instrumentList.map(instrument => {
         timestamp: new Date(),
         bid: 0,
         ask: 0,
+        pricePrecision: 0.00001,
+        quantityPrecision: 1,
+        minimumNotional: null,
+        maximumNotional: null,
+        minimumQuantity: 10000,
+        maximumQuantity: null
     }
     // tslint:disable-next-line:prefer-for-of
     for (let i = 0; i < timeframes.length; i++) {
         Timeframes[symbol + '-' + timeframeNames[i]] = {
-            _id: undefined,
+            _id: new ObjectId(),
             timeframe: timeframeNames[i],
             minutes: Number.parseInt(timeframes[i], 10),
             symbol,
@@ -214,7 +226,9 @@ const connect = async () => {
         logger.info('Connected to database.');
         db = mongoClient.db(mongodbName);
         const exchange = db.collection('exchange');
-        await exchange.findOne({ name: 'oanda' }, (err, exchangeItem) => {
+        await exchange.findOne({
+            name: 'oanda'
+        }, (err, exchangeItem) => {
             if (err) {
                 logger.error(err);
                 return;
@@ -336,9 +350,9 @@ const UpdateInstruments = () => {
 const ProcessHeartbeat = (heartbeat: Date) => {
     if (enableLog === true) logger.info(heartbeat);
     if (dbConnected === true) {
-        const exhange = db.collection('exchange');
-        exhange.updateOne({
-            name: 'oanda'
+        const exchange = db.collection('exchange');
+        exchange.updateOne({
+            name: exchangeName
         }, {
             $set: {
                 heartbeat: new Date(heartbeat).getTime(),
@@ -403,7 +417,21 @@ const ProcessTicker = (ticker: Ticker) => {
                         logger.error(err);
                     }
                 });
+                db.collection('timeframe').updateOne({
+                    symbol: timeframe.symbol,
+                    timeframe: timeframe.timeframe,
+                    minutes: timeframe.minutes
+                }, {
+                    $set: {
+                        candlestick: timeframe.candlestick
+                    }
+                });
             } else {
+                db.collection('candlestick').insertOne(timeframe.candlestick, (err) => {
+                    if (err) {
+                        logger.error(err);
+                    }
+                });
                 // New Candlestick
                 timeframe.candlestick._id = new ObjectId();
                 timeframe.candlestick.timestamp = timeframe.candlestick.nextTimestamp;
@@ -417,6 +445,15 @@ const ProcessTicker = (ticker: Ticker) => {
                 db.collection('candlestick').insertOne(timeframe.candlestick, (err) => {
                     if (err) {
                         logger.error(err);
+                    }
+                });
+                db.collection('timeframe').updateOne({
+                    symbol: timeframe.symbol,
+                    timeframe: timeframe.timeframe,
+                    minutes: timeframe.minutes
+                }, {
+                    $set: {
+                        candlestick: timeframe.candlestick
                     }
                 });
             }
