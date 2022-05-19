@@ -323,22 +323,26 @@ const UpdateInstruments = () => {
                 Timeframes[key]._id = timeframe._id;
                 const initialTimestamp = new Date(GetInitialTime(Timeframes[key]));
                 const nextTimestamp = new Date(initialTimestamp.getTime() + (Timeframes[key].minutes * 60000));
-                Timeframes[key].candlestick = {
-                    _id: new ObjectId(),
-                    symbol: Timeframes[key].symbol,
-                    timeframe: Timeframes[key].timeframe,
-                    timestamp: initialTimestamp,
-                    epoch: initialTimestamp.getTime(),
-                    nextTimestamp,
-                    open: 0,
-                    high: Number.MIN_VALUE,
-                    low: Number.MAX_VALUE,
-                    close: 0,
-                    volume: 0,
-                    timeframeId: timeframe._id,
-                    instrumentId: Instruments[Timeframes[key].symbol]._id,
-                    exchangeId
-                }
+                if (timeframe.timestamp === initialTimestamp) {
+                    Timeframes[key].candlestick = timeframe.candlestick;
+                } else {
+                    Timeframes[key].candlestick = {
+                        _id: new ObjectId(),
+                        symbol: Timeframes[key].symbol,
+                        timeframe: Timeframes[key].timeframe,
+                        timestamp: initialTimestamp,
+                        epoch: initialTimestamp.getTime(),
+                        nextTimestamp,
+                        open: 0,
+                        high: Number.MIN_VALUE,
+                        low: Number.MAX_VALUE,
+                        close: 0,
+                        volume: 0,
+                        timeframeId: timeframe._id,
+                        instrumentId: Instruments[Timeframes[key].symbol]._id,
+                        exchangeId
+                    }
+                }\
             }
         } catch (err) {
             logger.error(err);
