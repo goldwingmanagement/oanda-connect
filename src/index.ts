@@ -342,7 +342,7 @@ const UpdateInstruments = () => {
                         instrumentId: Instruments[Timeframes[key].symbol]._id,
                         exchangeId
                     }
-                }\
+                }
             }
         } catch (err) {
             logger.error(err);
