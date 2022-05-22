@@ -23,6 +23,7 @@ const logger = createLogger({
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 logger.info('Initializing.');
+// tslint:disable-next-line:no-var-requires
 require('dotenv').config();
 const exchangeName = 'oanda';
 const domain = 'stream-fxtrade.oanda.com';
@@ -99,6 +100,8 @@ interface Candlestick {
     low: number,
     close: number,
     volume: number,
+    exchange: string,
+    minutes: number,
     timeframeId: ObjectId | undefined,
     instrumentId: ObjectId | undefined,
     exchangeId: ObjectId | undefined
@@ -391,6 +394,8 @@ const UpdateInstruments = () => {
                         low: Number.MAX_VALUE,
                         close: 0,
                         volume: 0,
+                        minutes: Timeframes[key].minutes,
+                        exchange: exchangeName,
                         timeframeId: timeframe._id,
                         instrumentId: Instruments[Timeframes[key].symbol]._id,
                         exchangeId
