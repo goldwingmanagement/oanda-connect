@@ -422,28 +422,22 @@ const ProcessHeartbeat = (heartbeat: Date) => {
 
 const ProcessTicker = (ticker: Ticker) => {
     if (enableLog === true) logger.info(JSON.stringify(ticker));
-    const tick = db.collection('tick');
+    // const tick = db.collection('tick');
     if (ticker.instrumentId === undefined) return;
-    tick.insertOne({
-       symbol: ticker.symbol,
-       bid: ticker.bid,
-       ask: ticker.ask,
-       epoch: new Date(ticker.timestamp).getTime(),
-       timestamp: new Date(ticker.timestamp),
-       instrumentId: ticker.instrumentId,
-       exchangeId
-    });
-    db.collection('market').updateOne({
-        symbol: ticker.symbol,
-        exchangeId
-    }, {
-        $set: {
-            bid: ticker.bid,
-            ask: ticker.ask,
-            epoch: new Date(ticker.timestamp).getTime(),
-            timestamp: new Date(ticker.timestamp)
-        }
-    });
+    // tick.insertOne({
+    //    symbol: ticker.symbol,
+    //    bid: ticker.bid,
+    //    ask: ticker.ask,
+    //    epoch: new Date(ticker.timestamp).getTime(),
+    //    timestamp: new Date(ticker.timestamp),
+    //    instrumentId: ticker.instrumentId,
+    //    exchangeId
+    // });
+    Markets[ticker.symbol].bid = ticker.bid;
+    Markets[ticker.symbol].ask = ticker.ask;
+    Markets[ticker.symbol].timestamp = new Date(ticker.timestamp);
+    Markets[ticker.symbol].epoch = new Date(ticker.timestamp).getTime();
+
     Object.keys(Timeframes).forEach(key => {
         const timeframe = Timeframes[key];
         if (timeframe.symbol === ticker.symbol) {
@@ -457,6 +451,7 @@ const ProcessTicker = (ticker: Ticker) => {
                 timeframe.candlestick.high = Math.max(timeframe.candlestick.high, ticker.bid);
                 timeframe.candlestick.low = Math.min(timeframe.candlestick.low, ticker.bid);
                 timeframe.candlestick.volume += ticker.bidVolume;
+            } else {
                 db.collection('candlestick').updateOne({
                     timestamp: timeframe.candlestick.timestamp,
                     symbol: timeframe.candlestick.symbol,
@@ -474,21 +469,6 @@ const ProcessTicker = (ticker: Ticker) => {
                         logger.error(err);
                     }
                 });
-                db.collection('timeframe').updateOne({
-                    symbol: timeframe.symbol,
-                    timeframe: timeframe.timeframe,
-                    minutes: timeframe.minutes
-                }, {
-                    $set: {
-                        candlestick: timeframe.candlestick
-                    }
-                });
-            } else {
-                db.collection('candlestick').insertOne(timeframe.candlestick, (err) => {
-                    if (err) {
-                        logger.error(err);
-                    }
-                });
                 // New Candlestick
                 timeframe.candlestick._id = new ObjectId();
                 timeframe.candlestick.timestamp = timeframe.candlestick.nextTimestamp;
@@ -499,7 +479,13 @@ const ProcessTicker = (ticker: Ticker) => {
                 timeframe.candlestick.high = ticker.bid;
                 timeframe.candlestick.low = ticker.bid;
                 timeframe.candlestick.volume = ticker.bidVolume;
-                db.collection('candlestick').insertOne(timeframe.candlestick, (err) => {
+                db.collection('candlestick').insertOne(timeframe.candlestick, {
+                    writeConcern: {
+                        w: 0,
+                        j: false,
+                        wtimeout: 500
+                    }
+                }, (err) => {
                     if (err) {
                         logger.error(err);
                     }
@@ -512,12 +498,91 @@ const ProcessTicker = (ticker: Ticker) => {
                     $set: {
                         candlestick: timeframe.candlestick
                     }
+                }, {
+                    writeConcern: {
+                        w: 0,
+                        j: false,
+                        wtimeout: 500
+                    }
                 });
             }
             if (enableLog === true) logger.info(JSON.stringify(timeframe.candlestick));
         }
     })
 };
+
+setInterval(() => {
+    // We have to throttle updates due to speed
+    let marketUpdates: any = [];
+    if (db === undefined || db === null) return;
+    Object.keys(Markets).forEach(key => {
+        const market = Markets[key];
+        marketUpdates.push({
+            updateOne: {
+                filter: {
+                    exchange: exchangeName,
+                    symbol: market.symbol
+                },
+                update: {
+                    $set: {
+                        bid: market.bid,
+                        ask: market.ask,
+                        timestamp: market.timestamp,
+                        epoch: market.epoch
+                    }
+                }
+            }
+        });
+    });
+    db.collection('market').bulkWrite(marketUpdates, err => {
+        logger.error(err);
+    });
+    let candlestickUpdates: any = [];
+    let timeframeUpdates: any = [];
+    Object.keys(Timeframes).forEach(key => {
+        const timeframe = Timeframes[key];
+        const candlestick = timeframe.candlestick;
+        if (candlestick === undefined) return;
+        candlestickUpdates.push({
+            updateOne: {
+                filter: {
+                    exchange: exchangeName,
+                    timeframe: candlestick.timeframe,
+                    symbol: candlestick.symbol,
+                    timestamp: candlestick.timestamp
+                },
+                update: {
+                    $set: {
+                        high: candlestick.high,
+                        low: candlestick.low,
+                        close: candlestick.close,
+                        volume: candlestick.volume
+                    }
+                }
+            }
+        });
+        timeframeUpdates.push({
+            updateOne: {
+                filter: {
+                    exchange: exchangeName,
+                    timeframe: candlestick.timeframe,
+                    symbol: candlestick.symbol
+                },
+                update: {
+                    $set: {
+                        candlestick: candlestick
+                    }
+                }
+            }
+        });
+    });
+    db.collection('candlestick').bulkWrite(candlestickUpdates, err => {
+        logger.error(err);
+    });
+    db.collection('timeframe').bulkWrite(timeframeUpdates, err => {
+        logger.error(err);
+    });
+}, 100)
 
 const GetInitialTime = (timeframe: Timeframe) => {
     let lastMinute = new Date().setSeconds(0, 0);
