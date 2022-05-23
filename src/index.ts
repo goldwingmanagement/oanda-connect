@@ -539,7 +539,13 @@ setInterval(() => {
             }
         });
     });
-    db.collection('market').bulkWrite(marketUpdates, err => {
+    db.collection('market').bulkWrite(marketUpdates, {
+        writeConcern: {
+            w: 0,
+            j: false,
+            wtimeout: 500
+        }
+    }, err => {
         logger.error(err);
     });
     let candlestickUpdates: any = [];
@@ -581,10 +587,22 @@ setInterval(() => {
             }
         });
     });
-    db.collection('candlestick').bulkWrite(candlestickUpdates, err => {
+    db.collection('candlestick').bulkWrite(candlestickUpdates, {
+        writeConcern: {
+            w: 0,
+            j: false,
+            wtimeout: 500
+        }
+    }, err => {
         logger.error(err);
     });
-    db.collection('timeframe').bulkWrite(timeframeUpdates, err => {
+    db.collection('timeframe').bulkWrite(timeframeUpdates, {
+        writeConcern: {
+            w: 0,
+            j: false,
+            wtimeout: 500
+        }
+    }, err => {
         logger.error(err);
     });
 }, 100)
