@@ -210,6 +210,7 @@ const request = https.request(options, (response: any) => {
         });
     } catch (err) {
         logger.error(err);
+        console.trace(err);
         process.exit(1);
     }
 });
@@ -247,6 +248,7 @@ const processMessage = (message: string) => {
     }
     catch (err) {
         logger.error(err);
+        console.trace(err);
     }
 }
 
@@ -261,6 +263,7 @@ const connect = async () => {
         }, (err, exchangeItem) => {
             if (err) {
                 logger.error(err);
+                console.trace(err);
                 return;
             }
             if (exchangeItem === null) {
@@ -289,6 +292,7 @@ const connect = async () => {
     }
     catch (err) {
         logger.error(err);
+        console.trace(err);
     }
 }
 
@@ -328,6 +332,7 @@ const UpdateInstruments = () => {
             }
         } catch (err) {
             logger.error(err);
+            console.trace(err);
         }
     });
     Object.keys(Markets).forEach(async key => {
@@ -354,6 +359,7 @@ const UpdateInstruments = () => {
             }
         } catch (err) {
             logger.error(err);
+            console.trace(err);
         }
     });
     Object.keys(Timeframes).forEach(async key => {
@@ -404,6 +410,7 @@ const UpdateInstruments = () => {
             }
         } catch (err) {
             logger.error(err);
+            console.trace(err);
         }
     });
 }
@@ -472,6 +479,7 @@ const ProcessTicker = (ticker: Ticker) => {
                 }, (err) => {
                     if (err) {
                         logger.error(err);
+                        console.trace(err);
                     }
                 });
                 // New Candlestick
@@ -493,6 +501,7 @@ const ProcessTicker = (ticker: Ticker) => {
                 }, (err) => {
                     if (err) {
                         logger.error(err);
+                        console.trace(err);
                     }
                 });
                 db.collection('timeframe').updateOne({
@@ -539,15 +548,21 @@ setInterval(() => {
             }
         });
     });
-    db.collection('market').bulkWrite(marketUpdates, {
-        writeConcern: {
-            w: 0,
-            j: false,
-            wtimeout: 500
-        }
-    }, err => {
-        logger.error(err);
-    });
+    if (marketUpdates.length !== 0) {
+        db.collection('market').bulkWrite(marketUpdates, {
+            writeConcern: {
+                w: 0,
+                j: false,
+                wtimeout: 500
+            }
+        }, err => {
+            if (err) {
+                logger.error(err);
+                console.trace(err);
+            }
+        });
+    }
+    
     let candlestickUpdates: any = [];
     let timeframeUpdates: any = [];
     Object.keys(Timeframes).forEach(key => {
@@ -587,24 +602,34 @@ setInterval(() => {
             }
         });
     });
-    db.collection('candlestick').bulkWrite(candlestickUpdates, {
-        writeConcern: {
-            w: 0,
-            j: false,
-            wtimeout: 500
-        }
-    }, err => {
-        logger.error(err);
-    });
-    db.collection('timeframe').bulkWrite(timeframeUpdates, {
-        writeConcern: {
-            w: 0,
-            j: false,
-            wtimeout: 500
-        }
-    }, err => {
-        logger.error(err);
-    });
+    if (candlestickUpdates.length !== 0) {
+        db.collection('candlestick').bulkWrite(candlestickUpdates, {
+            writeConcern: {
+                w: 0,
+                j: false,
+                wtimeout: 500
+            }
+        }, err => {
+            if (err) {
+                logger.error(err);
+                console.trace(err);
+            }
+        });
+    }
+    if (timeframeUpdates.length !== 0) {
+        db.collection('timeframe').bulkWrite(timeframeUpdates, {
+            writeConcern: {
+                w: 0,
+                j: false,
+                wtimeout: 500
+            }
+        }, err => {
+            if (err) {
+                logger.error(err);
+                console.trace(err);
+            }
+        });
+    }
 }, 100)
 
 const GetInitialTime = (timeframe: Timeframe) => {
@@ -680,6 +705,7 @@ const GetInitialTime = (timeframe: Timeframe) => {
 
 process.on('unhandledRejection', (err) => {
     logger.error(err);
+    console.trace(err);
     process.exit(1);
 });
 
